@@ -1,0 +1,763 @@
+---
+import CockpitLayout from '../../layouts/CockpitLayout.astro';
+---
+
+<CockpitLayout title="Admin - Produits">
+  <section class="product-admin-shell">
+    <div class="product-admin-hero">
+      <div>
+        <div class="flex items-center gap-3">
+          <h2 class="widget-title mb-0">Gerer les produits</h2>
+          <span id="fields-count" class="badge">Directus</span>
+        </div>
+        <p class="mt-3 max-w-2xl text-sm text-gray-400">
+          Clique sur un produit pour ouvrir sa fiche complete par-dessus cette page, modifier les champs, puis enregistrer directement dans Directus.
+        </p>
+      </div>
+      <div class="product-admin-actions">
+        <button type="button" id="refresh-products-button" class="button-link product-admin-button">Actualiser</button>
+        <button type="button" id="new-product-button" class="neon-accent product-admin-primary">Nouveau produit</button>
+      </div>
+    </div>
+
+    <div class="product-admin-toolbar">
+      <label class="product-search">
+        <span>Recherche</span>
+        <input id="product-search-input" class="input-base" type="search" placeholder="Nom, slug, marque..." />
+      </label>
+      <div id="product-status" class="status-badge">Pret</div>
+    </div>
+
+    <div id="product-list" class="product-catalog"></div>
+  </section>
+
+  <div id="product-editor-overlay" class="product-editor-overlay" aria-hidden="true">
+    <div class="product-editor-backdrop" data-action="close-editor"></div>
+    <aside class="product-editor-panel" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <form id="product-form" class="product-editor-form">
+        <input type="hidden" name="product_id" id="product-id" />
+
+        <header class="product-editor-header">
+          <div>
+            <span id="form-mode-badge" class="badge">Edition</span>
+            <h3 id="editor-title">Produit</h3>
+            <p id="current-product-label">Chargement de la fiche produit...</p>
+          </div>
+          <div class="product-editor-header-actions">
+            <button type="button" id="close-editor-button" class="button-link product-editor-icon" aria-label="Fermer">x</button>
+            <button type="submit" class="neon-accent product-admin-primary">Enregistrer</button>
+          </div>
+        </header>
+
+        <div class="product-editor-body">
+          <aside class="product-editor-side">
+            <div id="editor-preview" class="product-editor-preview">
+              <div class="product-editor-preview-image">NST</div>
+              <div>
+                <strong>Selectionne un produit</strong>
+                <span>Les informations Directus apparaitront ici.</span>
+              </div>
+            </div>
+
+            <div class="form-section product-upload-zone">
+              <div class="section-header">
+                <h3>Image principale</h3>
+                <p class="form-helper">Upload rapide ou ID Directus existant.</p>
+              </div>
+              <input id="product-image-file" type="file" accept="image/*" class="input-base" />
+              <label class="field-label mt-4">Asset ID image</label>
+              <input name="image" data-field="image" class="input-base editor-field" placeholder="ID Directus" />
+            </div>
+
+            <div class="form-section product-upload-zone">
+              <div class="section-header">
+                <h3>Galerie</h3>
+                <p class="form-helper">Les fichiers uploades seront envoyes comme liste d'IDs.</p>
+              </div>
+              <input id="product-gallery-files" type="file" accept="image/*" multiple class="input-base" />
+            </div>
+
+            <div class="form-section product-upload-zone product-variants-zone">
+              <div class="section-header product-variants-header">
+                <div>
+                  <h3>Variantes</h3>
+                  <p class="form-helper">Declinaisons du produit enregistrees dans le champ Directus variantes.</p>
+                </div>
+                <button id="add-product-variant" type="button" class="button-link product-variant-add">Ajouter</button>
+              </div>
+              <div id="product-variants-list" class="product-variants-list"></div>
+            </div>
+          </aside>
+
+          <main class="product-editor-main">
+            <div id="dynamic-fields" class="product-editor-fields"></div>
+          </main>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <script type="module">
+    const formEl = document.getElementById('product-form');
+    const status = document.getElementById('product-status');
+    const productIdInput = document.getElementById('product-id');
+    const productListEl = document.getElementById('product-list');
+    const newProductBtn = document.getElementById('new-product-button');
+    const refreshBtn = document.getElementById('refresh-products-button');
+    const searchInput = document.getElementById('product-search-input');
+    const overlay = document.getElementById('product-editor-overlay');
+    const closeEditorBtn = document.getElementById('close-editor-button');
+    const dynamicFieldsEl = document.getElementById('dynamic-fields');
+    const formModeBadge = document.getElementById('form-mode-badge');
+    const currentProductLabel = document.getElementById('current-product-label');
+    const editorTitle = document.getElementById('editor-title');
+    const editorPreview = document.getElementById('editor-preview');
+    const fieldsCount = document.getElementById('fields-count');
+    const fileInput = document.getElementById('product-image-file');
+    const galleryInput = document.getElementById('product-gallery-files');
+    const variantsListEl = document.getElementById('product-variants-list');
+    const addVariantBtn = document.getElementById('add-product-variant');
+
+    const SYSTEM_FIELDS = new Set(['id', 'date_created', 'date_updated', 'user_created', 'user_updated', 'sort']);
+    const RESERVED_FIELDS = new Set(['image', 'variantes']);
+    const PRIMARY_FIELDS = [
+      'Nom_du_produit',
+      'nom_court',
+      'slug',
+      'marque',
+      'description_simple',
+      'description_principale',
+      'prix',
+      'prix_promo',
+      'promo',
+      'poids',
+      'autonomie',
+      'assistance_max',
+      'temps_charge',
+      'materiaux',
+      'garantie',
+      'Bouton_acheter',
+      'texte_attente_sortie',
+      'variantes',
+      'faqs',
+      'seo_description',
+      'custom_alts',
+      'comparateur_defaut',
+    ];
+
+    let products = [];
+    let fields = [];
+    let activeProduct = null;
+    let activeVariants = [];
+    let query = '';
+
+    function setStatus(message, type = 'info') {
+      status.textContent = message;
+      status.className = `status-badge ${type === 'error' ? 'text-red-400' : type === 'success' ? 'text-cyan-300' : 'text-gray-300'}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+      })[char]);
+    }
+
+    function fieldLabel(field) {
+      return field?.meta?.translations?.[0]?.translation || field?.meta?.field || field?.field || '';
+    }
+
+    function getAssetId(field) {
+      if (!field) return '';
+      if (typeof field === 'string' || typeof field === 'number') return String(field);
+      const value = field.data ?? field;
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+      return value?.id ? String(value.id) : '';
+    }
+
+    function assetUrl(field) {
+      const id = getAssetId(field);
+      return id ? `/api/directus-asset?id=${encodeURIComponent(id)}` : '';
+    }
+
+    function normalizeValueForInput(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'object') return JSON.stringify(value, null, 2);
+      return String(value);
+    }
+
+    function normalizeNumberForInput(value) {
+      if (value === null || value === undefined) return '';
+      return String(value).replace(',', '.');
+    }
+
+    function makeVariantId() {
+      return `variant-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    }
+
+    function parseVariants(value) {
+      if (!value) return [];
+
+      // Directus many-to-many can come back as:
+      // - [{ ...variantFields }]
+      // - { data: [{ ...variantFields }] }
+      // - [{ id, ... }] / [{ variants_id, ... }] depending on junction
+      if (Array.isArray(value)) {
+        return value;
+      }
+
+      if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      }
+
+      if (typeof value === 'object') {
+        if (Array.isArray(value.data)) return value.data;
+        if (Array.isArray(value.items)) return value.items;
+
+        // Sometimes Directus returns an object like { id: ..., ... }
+        // or { variants: [...] }
+        for (const k of Object.keys(value)) {
+          if (Array.isArray(value[k])) return value[k];
+        }
+
+        return [];
+      }
+
+      return [];
+    }
+
+
+    function normalizeVariant(raw = {}) {
+      const variant = raw && typeof raw === 'object' ? raw : {};
+      return {
+        _uid: makeVariantId(),
+        _raw: variant,
+        nom: variant.nom ?? variant.name ?? variant.label ?? variant.titre ?? variant.couleur ?? '',
+        sku: variant.sku ?? variant.reference ?? '',
+        prix: variant.prix ?? variant.price ?? '',
+        prix_promo: variant.prix_promo ?? variant.promo_price ?? '',
+        stock: variant.stock ?? variant.quantite ?? '',
+        image: getAssetId(variant.image),
+        description: variant.description ?? '',
+        actif: variant.actif ?? variant.active ?? variant.disponible ?? true,
+      };
+    }
+
+    function renderVariants(value) {
+      activeVariants = parseVariants(value).map(normalizeVariant);
+      if (!activeVariants.length) activeVariants = [normalizeVariant()];
+      variantsListEl.innerHTML = activeVariants.map((variant, index) => `
+        <article class="product-variant-row" data-variant-id="${escapeHtml(variant._uid)}">
+          <div class="product-variant-row-head">
+            <strong>Variante ${index + 1}</strong>
+            <button type="button" class="button-link product-variant-remove" data-action="remove-variant" aria-label="Supprimer la variante">x</button>
+          </div>
+          <label class="field-label">Nom</label>
+          <input class="input-base" data-variant-field="nom" value="${escapeHtml(variant.nom)}" placeholder="Ex: Noir mat, Taille M..." />
+          <div class="product-variant-grid">
+            <label>
+              <span class="field-label">SKU</span>
+              <input class="input-base" data-variant-field="sku" value="${escapeHtml(variant.sku)}" />
+            </label>
+            <label>
+              <span class="field-label">Stock</span>
+              <input class="input-base" data-variant-field="stock" type="number" value="${escapeHtml(normalizeNumberForInput(variant.stock))}" />
+            </label>
+            <label>
+              <span class="field-label">Prix</span>
+              <input class="input-base" data-variant-field="prix" type="number" step="0.01" value="${escapeHtml(normalizeNumberForInput(variant.prix))}" />
+            </label>
+            <label>
+              <span class="field-label">Prix promo</span>
+              <input class="input-base" data-variant-field="prix_promo" type="number" step="0.01" value="${escapeHtml(normalizeNumberForInput(variant.prix_promo))}" />
+            </label>
+          </div>
+          <label class="field-label">Asset ID image</label>
+          <input class="input-base" data-variant-field="image" value="${escapeHtml(variant.image)}" placeholder="ID Directus optionnel" />
+          <label class="field-label">Description</label>
+          <textarea class="textarea-base" data-variant-field="description" rows="2">${escapeHtml(variant.description)}</textarea>
+          <label class="product-switch product-variant-switch">
+            <input data-variant-field="actif" type="checkbox" ${variant.actif ? 'checked' : ''} />
+            <span>Active</span>
+          </label>
+        </article>
+      `).join('');
+    }
+
+    function updateVariantFromInput(element) {
+      const row = element.closest('[data-variant-id]');
+      const field = element.dataset.variantField;
+      if (!row || !field) return;
+      const variant = activeVariants.find((item) => item._uid === row.dataset.variantId);
+      if (!variant) return;
+      variant[field] = element instanceof HTMLInputElement && element.type === 'checkbox' ? element.checked : element.value;
+    }
+
+    function variantHasContent(variant) {
+      return ['nom', 'sku', 'prix', 'prix_promo', 'stock', 'image', 'description'].some((key) => String(variant[key] ?? '').trim() !== '');
+    }
+
+    function collectVariants() {
+      // many-to-many: on PATCH/POST Directus, en fonction du schéma,
+      // on doit envoyer soit [{ id: '...' }, ...] soit une structure de la table liée.
+      // Ici on renvoie un objet "clean" avec id si présent, sinon les champs utiles.
+      return activeVariants
+        .filter(variantHasContent)
+        .map((variant) => {
+          const base = { ...(variant._raw || {}) };
+
+          // Tentative de récupérer un ID Directus de la variante depuis le payload relationnel.
+          const rawId =
+            base.id ??
+            base.variants_id ??
+            base.variant_id ??
+            base.variantes_id ??
+            variant.id ??
+            null;
+
+          const cleaned = {
+            ...base,
+            nom: variant.nom || null,
+            sku: variant.sku || null,
+            prix: variant.prix === '' ? null : Number.parseFloat(String(variant.prix).replace(',', '.')),
+            prix_promo:
+              variant.prix_promo === '' ? null : Number.parseFloat(String(variant.prix_promo).replace(',', '.')),
+            stock: variant.stock === '' ? null : Number.parseInt(String(variant.stock).replace(',', '.'), 10),
+            image: variant.image || null,
+            description: variant.description || null,
+            actif: Boolean(variant.actif),
+          };
+
+          if (!Number.isFinite(cleaned.prix)) cleaned.prix = null;
+          if (!Number.isFinite(cleaned.prix_promo)) cleaned.prix_promo = null;
+          if (!Number.isFinite(cleaned.stock)) cleaned.stock = null;
+
+          // Si on a un id, Directus peut accepter une relation de type [{id}]
+          // mais selon ton schéma, accepter aussi les champs complets.
+          if (rawId !== null && rawId !== undefined && String(rawId).trim() !== '') {
+            cleaned.id = rawId;
+          }
+
+          return cleaned;
+        });
+    }
+
+
+    function cleanPreviewHtml(raw) {
+      const template = document.createElement('template');
+      template.innerHTML = String(raw || '');
+      template.content.querySelectorAll('script, style, iframe, object, embed, link, meta').forEach((node) => node.remove());
+      template.content.querySelectorAll('*').forEach((node) => {
+        Array.from(node.attributes).forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          const value = attr.value.trim().toLowerCase();
+          if (name.startsWith('on') || value.startsWith('javascript:')) node.removeAttribute(attr.name);
+        });
+      });
+      return template.innerHTML;
+    }
+
+    function refreshHtmlPreview(wrapper) {
+      const textarea = wrapper.querySelector('textarea[data-field="description_principale"]');
+      const preview = wrapper.querySelector('[data-html-preview]');
+      if (!textarea || !preview) return;
+      const html = textarea.value.trim();
+      preview.innerHTML = html
+        ? cleanPreviewHtml(html)
+        : '<p class="html-preview-empty">Aucune description principale pour le moment.</p>';
+    }
+
+    function refreshHtmlPreviews() {
+      dynamicFieldsEl.querySelectorAll('[data-html-field]').forEach(refreshHtmlPreview);
+    }
+
+    function isReadonlyField(field) {
+      const meta = field?.meta ?? {};
+      const schema = field?.schema ?? {};
+      return Boolean(meta.readonly || meta.hidden || schema.is_generated || field?.type === 'alias');
+    }
+
+    function isRequiredField(field) {
+      return Boolean(field?.meta?.required || field?.schema?.is_nullable === false);
+    }
+
+    function inputTypeFor(fieldName, field) {
+      const type = field?.type || '';
+      if (type === 'boolean') return 'checkbox';
+      if (['integer', 'bigInteger', 'float', 'decimal'].includes(type)) return 'number';
+      if (['json', 'csv'].includes(type) || ['variantes', 'faqs'].includes(fieldName)) return 'textarea';
+      if (['text'].includes(type) || String(field?.meta?.interface || '').includes('input-rich-text')) return 'textarea';
+      if (type === 'date') return 'date';
+      if (['dateTime', 'timestamp'].includes(type)) return 'datetime-local';
+      return 'text';
+    }
+
+    function fieldByName(name) {
+      return fields.find((field) => field.field === name) || { field: name, type: 'string', meta: { field: name } };
+    }
+
+    function editableFields(product = {}) {
+      const knownNames = new Set(fields.map((field) => field.field));
+      Object.keys(product).forEach((key) => knownNames.add(key));
+
+      return Array.from(knownNames)
+        .filter((name) => !SYSTEM_FIELDS.has(name) && !RESERVED_FIELDS.has(name))
+        .map((name) => fieldByName(name))
+        .filter((field) => !isReadonlyField(field));
+    }
+
+    function groupFields(product) {
+      const editable = editableFields(product);
+      const byName = new Map(editable.map((field) => [field.field, field]));
+      const primary = PRIMARY_FIELDS.filter((name) => byName.has(name)).map((name) => byName.get(name));
+      const primaryNames = new Set(primary.map((field) => field.field));
+      const other = editable.filter((field) => !primaryNames.has(field.field));
+
+      return [
+        { title: 'Informations produit', helper: 'Champs essentiels de la fiche visible cote site.', fields: primary.slice(0, 6) },
+        { title: 'Commerce et specs', helper: 'Prix, promotion, dimensions et caracteristiques.', fields: primary.slice(6, 15) },
+        { title: 'Contenu avance', helper: 'SEO, variantes, FAQ et reglages additionnels.', fields: primary.slice(15) },
+        { title: 'Champs Directus detectes', helper: 'Autres champs presents dans la collection Produits.', fields: other },
+      ].filter((group) => group.fields.length);
+    }
+
+    function renderField(field, product) {
+      const name = field.field;
+      const value = product?.[name];
+      const type = inputTypeFor(name, field);
+      const label = escapeHtml(fieldLabel(field));
+      const note = field?.meta?.note ? `<p class="form-helper">${escapeHtml(field.meta.note)}</p>` : '';
+      const required = isRequiredField(field) ? 'required' : '';
+      const requiredMark = isRequiredField(field) ? ' *' : '';
+      const common = `name="${escapeHtml(name)}" data-field="${escapeHtml(name)}" class="input-base editor-field" ${required}`;
+
+      if (name === 'description_principale') {
+        return `
+          <div class="html-field" data-html-field>
+            <div class="html-field-top">
+              <div>
+                <label class="field-label">${label}${requiredMark}</label>
+                <p class="form-helper">Apercu du texte final rendu depuis le HTML enregistre.</p>
+              </div>
+              <span class="badge">HTML</span>
+            </div>
+            <div class="html-preview-shell">
+              <div class="html-preview" data-html-preview></div>
+            </div>
+            <details class="html-curtain">
+              <summary>Modifier le HTML</summary>
+              <textarea ${common.replace('input-base', 'textarea-base')} rows="10" spellcheck="false">${escapeHtml(normalizeValueForInput(value))}</textarea>
+            </details>
+            ${note}
+          </div>
+        `;
+      }
+
+      if (type === 'checkbox') {
+        return `
+          <label class="product-switch">
+            <input name="${escapeHtml(name)}" data-field="${escapeHtml(name)}" class="editor-field" type="checkbox" ${value ? 'checked' : ''} />
+            <span>${label}${requiredMark}</span>
+          </label>
+          ${note}
+        `;
+      }
+
+      if (type === 'textarea') {
+        return `
+          <label class="field-label">${label}${requiredMark}</label>
+          <textarea ${common.replace('input-base', 'textarea-base')} rows="${['description_principale', 'variantes', 'faqs'].includes(name) ? 6 : 3}">${escapeHtml(normalizeValueForInput(value))}</textarea>
+          ${note}
+        `;
+      }
+
+      const step = ['float', 'decimal'].includes(field?.type) ? ' step="0.01"' : '';
+      const normalizedValue = type === 'number' ? normalizeNumberForInput(value) : normalizeValueForInput(value);
+      return `
+        <label class="field-label">${label}${requiredMark}</label>
+        <input ${common} type="${type}"${step} value="${escapeHtml(normalizedValue)}" />
+        ${note}
+      `;
+    }
+
+    function renderEditor(product = {}) {
+      const title = product.Nom_du_produit || product.slug || 'Nouveau produit';
+      editorTitle.textContent = title;
+      currentProductLabel.textContent = product.id
+        ? `Modification de "${title}". Les champs viennent de Directus.`
+        : 'Creation d\'un nouveau produit dans Directus.';
+      formModeBadge.textContent = product.id ? 'Mode edition' : 'Mode creation';
+      productIdInput.value = product.id ?? '';
+
+      const image = assetUrl(product.image);
+      editorPreview.innerHTML = `
+        <div class="product-editor-preview-image" ${image ? `style="background-image:url('${escapeHtml(image)}')"` : ''}>${image ? '' : escapeHtml(String(title).slice(0, 3).toUpperCase())}</div>
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(product.marque || product.slug || 'Fiche Directus')}</span>
+        </div>
+      `;
+
+      const imageInput = formEl.elements.namedItem('image');
+      if (imageInput instanceof HTMLInputElement) imageInput.value = getAssetId(product.image);
+      renderVariants(product.variantes);
+
+      const groups = groupFields(product);
+      dynamicFieldsEl.innerHTML = groups.map((group) => `
+        <section class="form-section product-editor-section">
+          <div class="section-header">
+            <h3>${escapeHtml(group.title)}</h3>
+            <p class="form-helper">${escapeHtml(group.helper)}</p>
+          </div>
+          <div class="product-field-grid">
+            ${group.fields.map((field) => `<div class="product-field ${field.field === 'description_principale' ? 'product-field--wide' : ''}">${renderField(field, product)}</div>`).join('')}
+          </div>
+        </section>
+      `).join('');
+      refreshHtmlPreviews();
+    }
+
+    function openEditor(product = {}) {
+      activeProduct = product;
+      formEl.reset();
+      renderEditor(product);
+      overlay.classList.add('is-open');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('editor-open');
+    }
+
+    function closeEditor() {
+      overlay.classList.remove('is-open');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('editor-open');
+    }
+
+    function renderProductList(items) {
+      if (!items.length) {
+        productListEl.innerHTML = '<div class="widget-card text-sm text-gray-400">Aucun produit trouve.</div>';
+        return;
+      }
+
+      productListEl.innerHTML = items.map((product) => {
+        const title = product.Nom_du_produit || product.slug || 'Sans nom';
+        const image = assetUrl(product.image);
+        const price = product.promo && product.prix_promo ? `${product.prix_promo} EUR promo` : product.prix ? `${product.prix} EUR` : 'Prix non defini';
+        return `
+          <button type="button" class="product-catalog-card" data-action="edit" data-id="${escapeHtml(product.id)}">
+            <span class="product-catalog-image" ${image ? `style="background-image:url('${escapeHtml(image)}')"` : ''}>${image ? '' : escapeHtml(String(title).slice(0, 2).toUpperCase())}</span>
+            <span class="product-catalog-body">
+              <strong>${escapeHtml(title)}</strong>
+              <span>${escapeHtml(product.marque || 'Sans marque')} · ${escapeHtml(product.slug || 'sans-slug')}</span>
+              <small>${escapeHtml(product.description_simple || '')}</small>
+            </span>
+            <span class="product-catalog-meta">
+              <span class="badge">${escapeHtml(price)}</span>
+              <span class="badge">${product.promo ? 'Promo' : 'Standard'}</span>
+            </span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function applyFilter() {
+      const value = query.trim().toLowerCase();
+      const filtered = value
+        ? products.filter((product) => [
+            product.Nom_du_produit,
+            product.slug,
+            product.marque,
+            product.description_simple,
+          ].some((part) => String(part || '').toLowerCase().includes(value)))
+        : products;
+      renderProductList(filtered);
+    }
+
+    async function loadProductFields() {
+      const res = await fetch('/api/product-fields');
+      const json = await res.json();
+      if (!res.ok) throw json;
+      fields = Array.isArray(json.data) ? json.data : [];
+      fieldsCount.textContent = `${fields.length} champs`;
+    }
+
+    async function loadProducts() {
+      productListEl.innerHTML = '<div class="widget-card text-sm text-gray-400">Chargement des produits...</div>';
+      const res = await fetch('/api/products');
+      const json = await res.json();
+      if (!res.ok) throw json;
+      const items = json?.data ?? json;
+      products = Array.isArray(items) ? items : [];
+      applyFilter();
+    }
+
+    async function loadProduct(id) {
+      setStatus('Chargement de la fiche...');
+      const res = await fetch(`/api/product?id=${encodeURIComponent(id)}`);
+      const json = await res.json();
+      if (!res.ok) throw json;
+      const product = json?.data ?? json;
+      setStatus('Fiche chargee');
+      return product;
+    }
+
+    function parseFieldValue(fieldName, field, element) {
+      if (element instanceof HTMLInputElement && element.type === 'checkbox') return element.checked;
+      const raw = element.value;
+      if (raw === '') return null;
+      if (['json', 'csv'].includes(field?.type) || ['variantes', 'faqs'].includes(fieldName)) {
+        try { return JSON.parse(raw); } catch { return raw; }
+      }
+      if (['integer', 'bigInteger'].includes(field?.type)) return Number.parseInt(raw.replace(',', '.'), 10);
+      if (['float', 'decimal'].includes(field?.type)) return Number.parseFloat(raw.replace(',', '.'));
+      return raw;
+    }
+
+    async function uploadAsset(file) {
+      const uploadForm = new FormData();
+      uploadForm.append('file', file);
+      const res = await fetch('/api/upload-asset', { method: 'POST', body: uploadForm });
+      const json = await res.json();
+      if (!res.ok) throw json;
+      return json.data?.id ?? json.id ?? json.data?.data?.id;
+    }
+
+    async function saveProduct() {
+      const payload = {};
+      const fieldElements = formEl.querySelectorAll('.editor-field[data-field]');
+      fieldElements.forEach((element) => {
+        const name = element.dataset.field;
+        if (!name) return;
+        const field = fieldByName(name);
+        payload[name] = parseFieldValue(name, field, element);
+      });
+
+      const mainFile = fileInput.files && fileInput.files[0];
+      if (mainFile) payload.image = await uploadAsset(mainFile);
+
+      if (galleryInput.files && galleryInput.files.length) {
+        const galleryIds = [];
+        for (const file of Array.from(galleryInput.files)) {
+          const id = await uploadAsset(file);
+          if (id) galleryIds.push(id);
+        }
+        if (galleryIds.length) payload.galerie = galleryIds;
+      }
+
+      payload.variantes = collectVariants();
+
+      const isEditing = Boolean(productIdInput.value);
+      if (isEditing) payload.id = productIdInput.value;
+
+      const endpoint = isEditing ? '/api/update-product' : '/api/create-product';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw json;
+      return json;
+    }
+
+    productListEl.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-action="edit"]');
+      if (!button) return;
+
+      try {
+        const product = await loadProduct(button.dataset.id);
+        openEditor(product);
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur chargement produit', 'error');
+      }
+    });
+
+    newProductBtn.addEventListener('click', () => openEditor({}));
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        setStatus('Actualisation...');
+        await loadProducts();
+        setStatus('Liste actualisee', 'success');
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur actualisation', 'error');
+      }
+    });
+
+    searchInput.addEventListener('input', (event) => {
+      query = event.target.value;
+      applyFilter();
+    });
+
+    dynamicFieldsEl.addEventListener('input', (event) => {
+      const field = event.target.closest('[data-field="description_principale"]');
+      if (!field) return;
+      const wrapper = field.closest('[data-html-field]');
+      if (wrapper) refreshHtmlPreview(wrapper);
+    });
+
+    formEl.addEventListener('input', (event) => {
+      const variantField = event.target.closest('[data-variant-field]');
+      if (variantField) updateVariantFromInput(variantField);
+    });
+
+    formEl.addEventListener('click', (event) => {
+      const removeBtn = event.target.closest('[data-action="remove-variant"]');
+      if (!removeBtn) return;
+      const row = removeBtn.closest('[data-variant-id]');
+      activeVariants = activeVariants.filter((variant) => variant._uid !== row?.dataset.variantId);
+      renderVariants(activeVariants);
+    });
+
+    addVariantBtn.addEventListener('click', () => {
+      activeVariants.push(normalizeVariant());
+      renderVariants(activeVariants);
+    });
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target.closest('[data-action="close-editor"]')) closeEditor();
+    });
+    closeEditorBtn.addEventListener('click', closeEditor);
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && overlay.classList.contains('is-open')) closeEditor();
+    });
+
+    formEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        setStatus('Enregistrement dans Directus...');
+        const json = await saveProduct();
+        const id = json.data?.id ?? json.id ?? productIdInput.value;
+        setStatus('Produit enregistre', 'success');
+        await loadProducts();
+        if (id) {
+          const fresh = await loadProduct(id);
+          openEditor(fresh);
+        }
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur: ' + (error?.message || JSON.stringify(error)), 'error');
+      }
+    });
+
+    (async function init() {
+      try {
+        setStatus('Connexion Directus...');
+        await Promise.all([loadProductFields(), loadProducts()]);
+        setStatus('Pret', 'success');
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur Directus', 'error');
+        productListEl.innerHTML = '<div class="widget-card text-sm text-red-400">Impossible de charger les produits ou les champs Directus.</div>';
+      }
+    })();
+  </script>
+</CockpitLayout>

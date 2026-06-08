@@ -1,0 +1,35 @@
+---
+// src/pages/produits/[slug].astro
+export const prerender = false; 
+
+import { directus } from '../../lib/directus';
+import { readItems } from '@directus/sdk';
+import CockpitLayout from '../../layouts/CockpitLayout.astro';
+
+const { slug } = Astro.params;
+
+// Utilisation de 'Produits' avec majuscule pour la collection
+const response = await directus.request(
+  readItems('Produits', {
+    filter: { slug: { _eq: slug } }
+  })
+);
+
+const produit = response[0];
+---
+
+<CockpitLayout title={produit ? produit.nom_court : "Produit introuvable"}>
+  <div class="p-8">
+    {produit ? (
+      <h1 class="text-3xl font-bold">{produit.nom_court}</h1>
+      <img 
+        src={`https://spirited-squid.pikapod.net/assets/${produit.image}`} 
+        alt={produit.nom_court} 
+        class="w-64 my-4" 
+      />
+      <p class="text-gray-300">{produit.description}</p>
+    ) : (
+      <h1 class="text-red-500">Produit introuvable</h1>
+    )}
+  </div>
+</CockpitLayout>

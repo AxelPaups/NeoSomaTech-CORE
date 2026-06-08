@@ -1,0 +1,540 @@
+---
+import CockpitLayout from '../../layouts/CockpitLayout.astro';
+---
+
+<CockpitLayout title="Admin - Articles">
+  <section class="product-admin-shell">
+    <div class="product-admin-hero">
+      <div>
+        <div class="flex items-center gap-3">
+          <h2 class="widget-title mb-0">Gerer les articles</h2>
+          <span id="fields-count" class="badge">Directus</span>
+        </div>
+        <p class="mt-3 max-w-2xl text-sm text-gray-400">
+          Clique sur un article pour ouvrir sa fiche complete par-dessus cette page, modifier les champs, puis enregistrer directement dans Directus.
+        </p>
+      </div>
+      <div class="product-admin-actions">
+        <button type="button" id="refresh-articles-button" class="button-link product-admin-button">Actualiser</button>
+        <button type="button" id="new-article-button" class="neon-accent product-admin-primary">Nouvel article</button>
+      </div>
+    </div>
+
+    <div class="product-admin-toolbar">
+      <label class="product-search">
+        <span>Recherche</span>
+        <input id="article-search-input" class="input-base" type="search" placeholder="Titre, slug, auteur..." />
+      </label>
+      <div id="article-status" class="status-badge">Pret</div>
+    </div>
+
+    <div id="article-list" class="product-catalog"></div>
+  </section>
+
+  <div id="article-editor-overlay" class="product-editor-overlay" aria-hidden="true">
+    <div class="product-editor-backdrop" data-action="close-editor"></div>
+    <aside class="product-editor-panel" role="dialog" aria-modal="true" aria-labelledby="editor-title">
+      <form id="article-form" class="product-editor-form">
+        <input type="hidden" name="article_id" id="article-id" />
+
+        <header class="product-editor-header">
+          <div>
+            <span id="form-mode-badge" class="badge">Edition</span>
+            <h3 id="editor-title">Article</h3>
+            <p id="current-article-label">Chargement de la fiche article...</p>
+          </div>
+          <div class="product-editor-header-actions">
+            <button type="button" id="close-editor-button" class="button-link product-editor-icon" aria-label="Fermer">x</button>
+            <button type="submit" class="neon-accent product-admin-primary">Enregistrer</button>
+          </div>
+        </header>
+
+        <div class="product-editor-body">
+          <aside class="product-editor-side">
+            <div id="editor-preview" class="product-editor-preview">
+              <div class="product-editor-preview-image">ART</div>
+              <div>
+                <strong>Selectionne un article</strong>
+                <span>Les informations Directus apparaitront ici.</span>
+              </div>
+            </div>
+
+            <div class="form-section product-upload-zone">
+              <div class="section-header">
+                <h3>Image principale</h3>
+                <p class="form-helper">Upload rapide ou ID Directus existant.</p>
+              </div>
+              <input id="article-image-file" type="file" accept="image/*" class="input-base" />
+              <label class="field-label mt-4">Asset ID image</label>
+              <input name="image_principale" data-field="image_principale" class="input-base editor-field" placeholder="ID Directus" />
+            </div>
+          </aside>
+
+          <main class="product-editor-main">
+            <div id="dynamic-fields" class="product-editor-fields"></div>
+          </main>
+        </div>
+      </form>
+    </aside>
+  </div>
+
+  <script type="module">
+    const formEl = document.getElementById('article-form');
+    const status = document.getElementById('article-status');
+    const articleIdInput = document.getElementById('article-id');
+    const articleListEl = document.getElementById('article-list');
+    const newArticleBtn = document.getElementById('new-article-button');
+    const refreshBtn = document.getElementById('refresh-articles-button');
+    const searchInput = document.getElementById('article-search-input');
+    const overlay = document.getElementById('article-editor-overlay');
+    const closeEditorBtn = document.getElementById('close-editor-button');
+    const dynamicFieldsEl = document.getElementById('dynamic-fields');
+    const formModeBadge = document.getElementById('form-mode-badge');
+    const currentArticleLabel = document.getElementById('current-article-label');
+    const editorTitle = document.getElementById('editor-title');
+    const editorPreview = document.getElementById('editor-preview');
+    const fieldsCount = document.getElementById('fields-count');
+    const fileInput = document.getElementById('article-image-file');
+
+    const SYSTEM_FIELDS = new Set(['id', 'date_created', 'date_updated', 'user_created', 'user_updated', 'sort']);
+    const RESERVED_FIELDS = new Set(['image_principale']);
+    const PRIMARY_FIELDS = [
+      'titre',
+      'slug',
+      'excerpt',
+      'contenu',
+      'date_publication',
+      'auteur',
+      'categorie',
+      'tags',
+      'seo_description',
+      'custom_alts',
+    ];
+
+    let articles = [];
+    let fields = [];
+    let activeArticle = null;
+    let query = '';
+
+    function setStatus(message, type = 'info') {
+      status.textContent = message;
+      status.className = `status-badge ${type === 'error' ? 'text-red-400' : type === 'success' ? 'text-cyan-300' : 'text-gray-300'}`;
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#039;',
+      })[char]);
+    }
+
+    function fieldLabel(field) {
+      return field?.meta?.translations?.[0]?.translation || field?.meta?.field || field?.field || '';
+    }
+
+    function getAssetId(field) {
+      if (!field) return '';
+      if (typeof field === 'string' || typeof field === 'number') return String(field);
+      const value = field.data ?? field;
+      if (typeof value === 'string' || typeof value === 'number') return String(value);
+      return value?.id ? String(value.id) : '';
+    }
+
+    function assetUrl(field) {
+      const id = getAssetId(field);
+      return id ? `/api/directus-asset?id=${encodeURIComponent(id)}` : '';
+    }
+
+    function normalizeValueForInput(value) {
+      if (value === null || value === undefined) return '';
+      if (typeof value === 'object') return JSON.stringify(value, null, 2);
+      return String(value);
+    }
+
+    function normalizeNumberForInput(value) {
+      if (value === null || value === undefined) return '';
+      return String(value).replace(',', '.');
+    }
+
+    function cleanPreviewHtml(raw) {
+      const template = document.createElement('template');
+      template.innerHTML = String(raw || '');
+      template.content.querySelectorAll('script, style, iframe, object, embed, link, meta').forEach((node) => node.remove());
+      template.content.querySelectorAll('*').forEach((node) => {
+        Array.from(node.attributes).forEach((attr) => {
+          const name = attr.name.toLowerCase();
+          const value = attr.value.trim().toLowerCase();
+          if (name.startsWith('on') || value.startsWith('javascript:')) node.removeAttribute(attr.name);
+        });
+      });
+      return template.innerHTML;
+    }
+
+    function refreshHtmlPreview(wrapper) {
+      const textarea = wrapper.querySelector('textarea[data-field="contenu"]');
+      const preview = wrapper.querySelector('[data-html-preview]');
+      if (!textarea || !preview) return;
+      const html = textarea.value.trim();
+      preview.innerHTML = html
+        ? cleanPreviewHtml(html)
+        : '<p class="html-preview-empty">Aucun contenu pour le moment.</p>';
+    }
+
+    function refreshHtmlPreviews() {
+      dynamicFieldsEl.querySelectorAll('[data-html-field]').forEach(refreshHtmlPreview);
+    }
+
+    function isReadonlyField(field) {
+      const meta = field?.meta ?? {};
+      const schema = field?.schema ?? {};
+      return Boolean(meta.readonly || meta.hidden || schema.is_generated || field?.type === 'alias');
+    }
+
+    function isRequiredField(field) {
+      return Boolean(field?.meta?.required || field?.schema?.is_nullable === false);
+    }
+
+    function inputTypeFor(fieldName, field) {
+      const type = field?.type || '';
+      if (type === 'boolean') return 'checkbox';
+      if (['integer', 'bigInteger', 'float', 'decimal'].includes(type)) return 'number';
+      if (['json', 'csv'].includes(type)) return 'textarea';
+      if (type === 'text' || String(field?.meta?.interface || '').includes('input-rich-text')) return 'textarea';
+      if (type === 'date') return 'date';
+      if (['dateTime', 'timestamp'].includes(type)) return 'datetime-local';
+      return 'text';
+    }
+
+    function fieldByName(name) {
+      return fields.find((field) => field.field === name) || { field: name, type: 'string', meta: { field: name } };
+    }
+
+    function editableFields(article = {}) {
+      const knownNames = new Set(fields.map((field) => field.field));
+      Object.keys(article).forEach((key) => knownNames.add(key));
+
+      return Array.from(knownNames)
+        .filter((name) => !SYSTEM_FIELDS.has(name) && !RESERVED_FIELDS.has(name))
+        .map((name) => fieldByName(name))
+        .filter((field) => !isReadonlyField(field));
+    }
+
+    function groupFields(article) {
+      const editable = editableFields(article);
+      const byName = new Map(editable.map((field) => [field.field, field]));
+      const primary = PRIMARY_FIELDS.filter((name) => byName.has(name)).map((name) => byName.get(name));
+      const primaryNames = new Set(primary.map((field) => field.field));
+      const other = editable.filter((field) => !primaryNames.has(field.field));
+
+      return [
+        { title: 'Informations article', helper: 'Champs essentiels de la fiche visible cote site.', fields: primary.slice(0, 4) },
+        { title: 'Publication et meta', helper: 'Date, auteur, categorie et reglages additionnels.', fields: primary.slice(4) },
+        { title: 'Champs Directus detectes', helper: 'Autres champs presents dans la collection Articles.', fields: other },
+      ].filter((group) => group.fields.length);
+    }
+
+    function renderField(field, article) {
+      const name = field.field;
+      const value = article?.[name];
+      const type = inputTypeFor(name, field);
+      const label = escapeHtml(fieldLabel(field));
+      const note = field?.meta?.note ? `<p class="form-helper">${escapeHtml(field.meta.note)}</p>` : '';
+      const required = isRequiredField(field) ? 'required' : '';
+      const requiredMark = isRequiredField(field) ? ' *' : '';
+      const common = `name="${escapeHtml(name)}" data-field="${escapeHtml(name)}" class="input-base editor-field" ${required}`;
+
+      if (name === 'contenu') {
+        return `
+          <div class="html-field" data-html-field>
+            <div class="html-field-top">
+              <div>
+                <label class="field-label">${label}${requiredMark}</label>
+                <p class="form-helper">Apercu du texte final rendu depuis le HTML enregistre.</p>
+              </div>
+              <span class="badge">HTML</span>
+            </div>
+            <div class="html-preview-shell">
+              <div class="html-preview" data-html-preview></div>
+            </div>
+            <details class="html-curtain">
+              <summary>Modifier le HTML</summary>
+              <textarea ${common.replace('input-base', 'textarea-base')} rows="10" spellcheck="false">${escapeHtml(normalizeValueForInput(value))}</textarea>
+            </details>
+            ${note}
+          </div>
+        `;
+      }
+
+      if (type === 'checkbox') {
+        return `
+          <label class="product-switch">
+            <input name="${escapeHtml(name)}" data-field="${escapeHtml(name)}" class="editor-field" type="checkbox" ${value ? 'checked' : ''} />
+            <span>${label}${requiredMark}</span>
+          </label>
+          ${note}
+        `;
+      }
+
+      if (type === 'textarea') {
+        return `
+          <label class="field-label">${label}${requiredMark}</label>
+          <textarea ${common.replace('input-base', 'textarea-base')} rows="${['contenu'].includes(name) ? 6 : 3}">${escapeHtml(normalizeValueForInput(value))}</textarea>
+          ${note}
+        `;
+      }
+
+      const step = ['float', 'decimal'].includes(field?.type) ? ' step="0.01"' : '';
+      const normalizedValue = type === 'number' ? normalizeNumberForInput(value) : normalizeValueForInput(value);
+      return `
+        <label class="field-label">${label}${requiredMark}</label>
+        <input ${common} type="${type}"${step} value="${escapeHtml(normalizedValue)}" />
+        ${note}
+      `;
+    }
+
+    function renderEditor(article = {}) {
+      const title = article.titre || article.slug || 'Nouvel article';
+      editorTitle.textContent = title;
+      currentArticleLabel.textContent = article.id
+        ? `Modification de "${title}". Les champs viennent de Directus.`
+        : 'Creation d\'un nouvel article dans Directus.';
+      formModeBadge.textContent = article.id ? 'Mode edition' : 'Mode creation';
+      articleIdInput.value = article.id ?? '';
+
+      const image = assetUrl(article.image_principale);
+      editorPreview.innerHTML = `
+        <div class="product-editor-preview-image" ${image ? `style="background-image:url('${escapeHtml(image)}')"` : ''}>${image ? '' : escapeHtml(String(title).slice(0, 3).toUpperCase())}</div>
+        <div>
+          <strong>${escapeHtml(title)}</strong>
+          <span>${escapeHtml(article.auteur || article.slug || 'Fiche Directus')}</span>
+        </div>
+      `;
+
+      const imageInput = formEl.elements.namedItem('image_principale');
+      if (imageInput instanceof HTMLInputElement) imageInput.value = getAssetId(article.image_principale);
+
+      const groups = groupFields(article);
+      dynamicFieldsEl.innerHTML = groups.map((group) => `
+        <section class="form-section product-editor-section">
+          <div class="section-header">
+            <h3>${escapeHtml(group.title)}</h3>
+            <p class="form-helper">${escapeHtml(group.helper)}</p>
+          </div>
+          <div class="product-field-grid">
+            ${group.fields.map((field) => `<div class="product-field ${field.field === 'contenu' ? 'product-field--wide' : ''}">${renderField(field, article)}</div>`).join('')}
+          </div>
+        </section>
+      `).join('');
+      refreshHtmlPreviews();
+    }
+
+    function openEditor(article = {}) {
+      activeArticle = article;
+      formEl.reset();
+      renderEditor(article);
+      overlay.classList.add('is-open');
+      overlay.setAttribute('aria-hidden', 'false');
+      document.body.classList.add('editor-open');
+    }
+
+    function closeEditor() {
+      overlay.classList.remove('is-open');
+      overlay.setAttribute('aria-hidden', 'true');
+      document.body.classList.remove('editor-open');
+    }
+
+    function renderArticleList(items) {
+      if (!items.length) {
+        articleListEl.innerHTML = '<div class="widget-card text-sm text-gray-400">Aucun article trouve.</div>';
+        return;
+      }
+
+      articleListEl.innerHTML = items.map((article) => {
+        const title = article.titre || article.slug || 'Sans titre';
+        const image = assetUrl(article.image_principale);
+        const date = article.date_publication ? new Date(article.date_publication).toLocaleDateString('fr-FR') : 'Date inconnue';
+        return `
+          <button type="button" class="product-catalog-card" data-action="edit" data-id="${escapeHtml(article.id)}">
+            <span class="product-catalog-image" ${image ? `style="background-image:url('${escapeHtml(image)}')"` : ''}>${image ? '' : escapeHtml(String(title).slice(0, 2).toUpperCase())}</span>
+            <span class="product-catalog-body">
+              <strong>${escapeHtml(title)}</strong>
+              <span>${escapeHtml(article.auteur || 'Sans auteur')} · ${escapeHtml(date)}</span>
+              <small>${escapeHtml(article.excerpt || article.slug || '')}</small>
+            </span>
+            <span class="product-catalog-meta">
+              <span class="badge">${escapeHtml(article.slug || 'sans-slug')}</span>
+              <span class="badge">Article</span>
+            </span>
+          </button>
+        `;
+      }).join('');
+    }
+
+    function applyFilter() {
+      const value = query.trim().toLowerCase();
+      const filtered = value
+        ? articles.filter((article) => [
+            article.titre,
+            article.slug,
+            article.auteur,
+            article.excerpt,
+          ].some((part) => String(part || '').toLowerCase().includes(value)))
+        : articles;
+      renderArticleList(filtered);
+    }
+
+    async function loadArticleFields() {
+      const res = await fetch('/api/article-fields');
+      const json = await res.json();
+      if (!res.ok) throw json;
+      fields = Array.isArray(json.data) ? json.data : [];
+      fieldsCount.textContent = `${fields.length} champs`;
+    }
+
+    async function loadArticles() {
+      articleListEl.innerHTML = '<div class="widget-card text-sm text-gray-400">Chargement des articles...</div>';
+      const res = await fetch('/api/articles');
+      const json = await res.json();
+      if (!res.ok) throw json;
+      const items = json?.data ?? json;
+      articles = Array.isArray(items) ? items : [];
+      applyFilter();
+    }
+
+    async function loadArticle(id) {
+      setStatus('Chargement de la fiche...');
+      const res = await fetch(`/api/article?id=${encodeURIComponent(id)}`);
+      const json = await res.json();
+      if (!res.ok) throw json;
+      const article = json?.data ?? json;
+      setStatus('Fiche chargee');
+      return article;
+    }
+
+    function parseFieldValue(fieldName, field, element) {
+      if (element instanceof HTMLInputElement && element.type === 'checkbox') return element.checked;
+      const raw = element.value;
+      if (raw === '') return null;
+      if (['json', 'csv'].includes(field?.type)) {
+        try { return JSON.parse(raw); } catch { return raw; }
+      }
+      if (['integer', 'bigInteger'].includes(field?.type)) return Number.parseInt(raw.replace(',', '.'), 10);
+      if (['float', 'decimal'].includes(field?.type)) return Number.parseFloat(raw.replace(',', '.'));
+      return raw;
+    }
+
+    async function uploadAsset(file) {
+      const uploadForm = new FormData();
+      uploadForm.append('file', file);
+      const res = await fetch('/api/upload-asset', { method: 'POST', body: uploadForm });
+      const json = await res.json();
+      if (!res.ok) throw json;
+      return json.data?.id ?? json.id ?? json.data?.data?.id;
+    }
+
+    async function saveArticle() {
+      const payload = {};
+      const fieldElements = formEl.querySelectorAll('.editor-field[data-field]');
+      fieldElements.forEach((element) => {
+        const name = element.dataset.field;
+        if (!name) return;
+        const field = fieldByName(name);
+        payload[name] = parseFieldValue(name, field, element);
+      });
+
+      const mainFile = fileInput.files && fileInput.files[0];
+      if (mainFile) payload.image_principale = await uploadAsset(mainFile);
+
+      const isEditing = Boolean(articleIdInput.value);
+      if (isEditing) payload.id = articleIdInput.value;
+
+      const endpoint = isEditing ? '/api/update-article' : '/api/create-article';
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const json = await res.json();
+      if (!res.ok) throw json;
+      return json;
+    }
+
+    articleListEl.addEventListener('click', async (event) => {
+      const button = event.target.closest('[data-action="edit"]');
+      if (!button) return;
+
+      try {
+        const article = await loadArticle(button.dataset.id);
+        openEditor(article);
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur chargement article', 'error');
+      }
+    });
+
+    newArticleBtn.addEventListener('click', () => openEditor({}));
+    refreshBtn.addEventListener('click', async () => {
+      try {
+        setStatus('Actualisation...');
+        await loadArticles();
+        setStatus('Liste actualisee', 'success');
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur actualisation', 'error');
+      }
+    });
+
+    searchInput.addEventListener('input', (event) => {
+      query = event.target.value;
+      applyFilter();
+    });
+
+    dynamicFieldsEl.addEventListener('input', (event) => {
+      const field = event.target.closest('[data-field="contenu"]');
+      if (!field) return;
+      const wrapper = field.closest('[data-html-field]');
+      if (wrapper) refreshHtmlPreview(wrapper);
+    });
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target.closest('[data-action="close-editor"]')) closeEditor();
+    });
+    closeEditorBtn.addEventListener('click', closeEditor);
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && overlay.classList.contains('is-open')) closeEditor();
+    });
+
+    formEl.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        setStatus('Enregistrement dans Directus...');
+        const json = await saveArticle();
+        const id = json.data?.id ?? json.id ?? articleIdInput.value;
+        setStatus('Article enregistre', 'success');
+        await loadArticles();
+        if (id) {
+          const fresh = await loadArticle(id);
+          openEditor(fresh);
+        }
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur: ' + (error?.message || JSON.stringify(error)), 'error');
+      }
+    });
+
+    (async function init() {
+      try {
+        setStatus('Connexion Directus...');
+        await Promise.all([loadArticleFields(), loadArticles()]);
+        setStatus('Pret', 'success');
+      } catch (error) {
+        console.error(error);
+        setStatus('Erreur Directus', 'error');
+        articleListEl.innerHTML = '<div class="widget-card text-sm text-red-400">Impossible de charger les articles ou les champs Directus.</div>';
+      }
+    })();
+  </script>
+</CockpitLayout>

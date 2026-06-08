@@ -1,11 +1,43 @@
 ---
-import Welcome from '../components/Welcome.astro';
-import Layout from '../layouts/Layout.astro';
-
-// Welcome to Astro! Wondering what to do next? Check out the Astro documentation at https://docs.astro.build
-// Don't want to use any of this? Delete everything in this file, the `assets`, `components`, and `layouts` directories, and start fresh.
+import CockpitLayout from '../layouts/CockpitLayout.astro';
+import DirectusWidget from '../components/widgets/DirectusWidget.astro';
+import CodeEditorWidget from '../components/widgets/CodeEditorWidget.astro';
+import SearchConsoleWidget from '../components/widgets/SearchConsoleWidget.astro';
+import AssistantWidget from '../components/widgets/AssistantWidget.astro';
+import ArticlesWidget from '../components/widgets/ArticlesWidget.astro';
 ---
 
-<Layout>
-	<Welcome />
-</Layout>
+<CockpitLayout title="Neosomatech CORE">
+  <header class="mb-8">
+    <h1 class="text-2xl font-bold">Neosomatech Control Center</h1>
+  </header>
+
+  <div class="dashboard-grid">
+    <div class="panel directus widget-card">
+      <DirectusWidget />
+    </div>
+
+    <div class="panel search widget-card">
+      <SearchConsoleWidget />
+    </div>
+
+    <div class="panel articles widget-card">
+      <ArticlesWidget />
+    </div>
+
+    <div class="panel code widget-card">
+      <CodeEditorWidget />
+    </div>
+
+    <div class="panel assistant widget-card">
+      <AssistantWidget />
+    </div>
+  </div>
+</CockpitLayout>
+
+<style is:global>
+  /* Petit ajustement pour que Gridstack soit bien intégré dans ton layout */
+  .grid-stack-item-content {
+    overflow-y: auto;
+  }
+</style>

@@ -1,0 +1,47 @@
+---
+import '../styles/global.css';
+interface Props { title: string; }
+const { title } = Astro.props;
+---
+<!doctype html>
+<html lang="fr" class="dark">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{title}</title>
+  </head>
+  <body class="bg-[#030712] text-white min-h-screen flex app-bg-grid">
+    <!-- Sidebar compact vertical -->
+    <aside class="sidebar-compact w-20 flex flex-col items-center gap-6 py-6">
+      <div class="flex items-center justify-center w-full">
+        <div class="w-8 h-8 rounded flex items-center justify-center font-bold text-gray-300" style="background:rgba(255,255,255,0.1);">N</div>
+      </div>
+
+      <nav class="flex-1 flex flex-col items-center gap-6 mt-4">
+        <a href="/" class="p-2 rounded-md hover:bg-white/10 neon-accent" title="Dashboard">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 9.5L12 4l9 5.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V9.5z"/></svg>
+        </a>
+        <a href="/admin/directus" class="p-2 rounded-md hover:bg-white/10 neon-accent" title="Directus">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 6h16M4 18h16M4 12h16m-8-6v12"/></svg>
+        </a>
+        <a href="/admin/products" class="p-2 rounded-md hover:bg-white/10 neon-accent" title="Produits">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 16V8a1 1 0 0 0-.553-.894l-8-4.5a1 1 0 0 0-.894 0l-8 4.5A1 1 0 0 0 3 8v8a1 1 0 0 0 .553.894l8 4.5a1 1 0 0 0 .894 0l8-4.5A1 1 0 0 0 21 16zM12 3v9"/></svg>
+        </a>
+        <a href="/admin/articles" class="p-2 rounded-md hover:bg-white/10 neon-accent" title="Articles">
+          <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h10M7 16h6M5 4h14a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z"/></svg>
+        </a>
+      </nav>
+
+      <div class="w-full flex items-center justify-center">
+        <button class="glass-panel text-sm text-gray-300">Axel</button>
+      </div>
+    </aside>
+
+    <!-- Zone principale -->
+    <main class="flex-1 p-8">
+      <div class="max-w-[1400px] mx-auto">
+        <slot />
+      </div>
+    </main>
+  </body>
+</html>

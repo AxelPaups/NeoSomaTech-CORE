@@ -1,0 +1,21 @@
+---
+const sampleCode = `import api
+
+def get_data():
+    resp = api.fetch("/data")
+    return resp.json()
+
+print(get_data())`;
+---
+
+<div class="flex flex-col gap-3 h-full">
+  <h2 class="widget-title">Code Editor</h2>
+
+  <div class="bg-[#041021] p-3 rounded-lg overflow-auto flex-1">
+    <pre class="text-sm font-mono text-green-200">{sampleCode}</pre>
+  </div>
+
+  <div class="flex justify-end mt-2">
+    <button class="px-4 py-2 rounded-md bg-gradient-to-r from-[#00e5ff] to-[#7c3aed] text-black font-semibold">Analyze & Refine</button>
+  </div>
+</div>

@@ -1,0 +1,21 @@
+---
+// src/components/widgets/ArticlesWidget.astro
+import { directus } from '../../lib/directus';
+import { readItems } from '@directus/sdk';
+
+const articles = await directus.request(readItems('Articles'));
+---
+
+<div class="mt-8">
+  <h2 class="text-gray-400 uppercase text-sm mb-4">Articles</h2>
+  <div class="flex flex-col gap-2">
+    {articles.map((art) => (
+      <div class="flex items-center justify-between p-3 bg-gray-900 rounded-lg">
+        <span class="text-white">{art.titre}</span>
+        <a href={`https://neosomatech.com/articles/${art.slug}`} target="_blank">
+          <svg class="w-5 h-5 text-gray-500 hover:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+        </a>
+      </div>
+    ))}
+  </div>
+</div>
