@@ -397,6 +397,10 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
         articleOverlay.setAttribute('aria-hidden', 'true');
       }
 
+      function setStatus(text) {
+        if (statusText) statusText.textContent = text;
+      }
+
       async function init() {
         setStatus('Chargement...');
         productsList.innerHTML = '<div class="text-sm text-gray-400">Chargement...</div>';
@@ -417,19 +421,6 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
           renderProductList(products);
           renderArticleList(articles);
           setStatus(prodData.ok && artData.ok ? 'Connecte' : 'Probleme');
-        } catch (err) {
-          console.error('Init error:', err);
-          productsList.innerHTML = `<div class="text-sm text-red-400">Erreur: ${esc(err.message)}</div>`;
-          articlesList.innerHTML = `<div class="text-sm text-red-400">Erreur: ${esc(err.message)}</div>`;
-          setStatus('Erreur');
-        }
-      }
-          if (artFieldsData?.ok) {
-            try {
-              const af = await artFieldsData.json();
-              cacheFields(LS_ARTICLE, af.data || af || []);
-            } catch {}
-          }
         } catch (err) {
           console.error('Init error:', err);
           productsList.innerHTML = `<div class="text-sm text-red-400">Erreur: ${esc(err.message)}</div>`;
