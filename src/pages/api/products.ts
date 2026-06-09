@@ -35,6 +35,9 @@ export async function GET() {
       return new Response(JSON.stringify({ error: 'DIRECTUS_TOKEN not set on server' }), { status: 500, headers: { 'Content-Type': 'application/json' } });
     }
 
+    // NB : on liste uniquement les champs confirmement accessibles au token.
+    // description_simple/status/date_created/date_updated ne sont pas demandes
+    // ici pour eviter un 403 (champs sans permission read).
     const fields = [
       'id',
       'Nom_du_produit',
@@ -44,8 +47,10 @@ export async function GET() {
       'prix_promo',
       'promo',
       'marque',
+      'description_principale',
       'image',
       'image.id',
+      'variantes',
     ].join(',');
 
     const res = await fetch(`${DIRECTUS_URL}/items/Produits?limit=-1&fields=${fields}`, {

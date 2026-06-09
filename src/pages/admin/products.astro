@@ -25,8 +25,36 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
         <span>Recherche</span>
         <input id="product-search-input" class="input-base" type="search" placeholder="Nom, slug, marque..." />
       </label>
+      <label class="product-filter">
+        <span>Marque</span>
+        <select id="product-brand-filter" class="input-base">
+          <option value="">Toutes</option>
+        </select>
+      </label>
+      <label class="product-filter">
+        <span>Tri</span>
+        <select id="product-sort" class="input-base">
+          <option value="updated_desc">Plus recents</option>
+          <option value="updated_asc">Plus anciens</option>
+          <option value="name_asc">Nom A → Z</option>
+          <option value="name_desc">Nom Z → A</option>
+          <option value="price_asc">Prix croissant</option>
+          <option value="price_desc">Prix decroissant</option>
+        </select>
+      </label>
+      <label class="product-filter product-filter--toggle">
+        <input id="product-promo-only" type="checkbox" />
+        <span>Promo uniquement</span>
+      </label>
+      <label class="product-filter product-filter--toggle">
+        <input id="product-no-image" type="checkbox" />
+        <span>Sans image</span>
+      </label>
+      <div id="product-results-count" class="product-results-count">—</div>
       <div id="product-status" class="status-badge">Pret</div>
     </div>
+
+    <div id="product-admin-stats" class="product-admin-stats" aria-live="polite"></div>
 
     <div id="product-list" class="product-catalog"></div>
   </section>
@@ -105,6 +133,11 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
     const newProductBtn = document.getElementById('new-product-button');
     const refreshBtn = document.getElementById('refresh-products-button');
     const searchInput = document.getElementById('product-search-input');
+    const brandFilterEl = document.getElementById('product-brand-filter');
+    const sortEl = document.getElementById('product-sort');
+    const promoOnlyEl = document.getElementById('product-promo-only');
+    const noImageEl = document.getElementById('product-no-image');
+    const resultsCountEl = document.getElementById('product-results-count');
     const overlay = document.getElementById('product-editor-overlay');
     const closeEditorBtn = document.getElementById('close-editor-button');
     const dynamicFieldsEl = document.getElementById('dynamic-fields');
@@ -117,6 +150,14 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
     const galleryInput = document.getElementById('product-gallery-files');
     const variantsListEl = document.getElementById('product-variants-list');
     const addVariantBtn = document.getElementById('add-product-variant');
+    const statsEl = document.getElementById('product-admin-stats');
+    const duplicateBtn = document.createElement('button');
+    duplicateBtn.type = 'button';
+    duplicateBtn.id = 'duplicate-product-button';
+    duplicateBtn.className = 'button-link product-admin-button';
+    duplicateBtn.textContent = 'Dupliquer';
+    duplicateBtn.style.display = 'none';
+    document.querySelector('.product-admin-actions')?.appendChild(duplicateBtn);
 
     const SYSTEM_FIELDS = new Set(['id', 'date_created', 'date_updated', 'user_created', 'user_updated', 'sort']);
     const RESERVED_FIELDS = new Set(['image', 'variantes']);
@@ -532,12 +573,156 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
       overlay.classList.add('is-open');
       overlay.setAttribute('aria-hidden', 'false');
       document.body.classList.add('editor-open');
+      // Affiche le bouton Dupliquer uniquement pour un produit existant
+      duplicateBtn.style.display = product.id ? '' : 'none';
+      // Snapshot pour le dirty-detection
+      setTimeout(snapshotForm, 0);
     }
 
     function closeEditor() {
+      if (isDirty && !confirm('Vous avez des modifications non sauvegardees. Fermer quand meme ?')) {
+        return;
+      }
       overlay.classList.remove('is-open');
       overlay.setAttribute('aria-hidden', 'true');
       document.body.classList.remove('editor-open');
+      isDirty = false;
+    }
+
+    function formatDate(value) {
+      if (!value) return '';
+      const d = new Date(value);
+      if (Number.isNaN(d.getTime())) return '';
+      return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' });
+    }
+
+    function countVariants(value) {
+      if (Array.isArray(value)) return value.length;
+      if (typeof value === 'string') {
+        try {
+          const parsed = JSON.parse(value);
+          return Array.isArray(parsed) ? parsed.length : 0;
+        } catch { return 0; }
+      }
+      if (value && typeof value === 'object' && Array.isArray(value.data)) return value.data.length;
+      return 0;
+    }
+
+    function countGallery(value) {
+      if (Array.isArray(value)) return value.length;
+      if (value && typeof value === 'object' && Array.isArray(value.data)) return value.data.length;
+      return 0;
+    }
+
+    function computeStats(items) {
+      const total = items.length;
+      let withPromo = 0;
+      let withoutImage = 0;
+      let withVariants = 0;
+      let lastUpdated = 0;
+      for (const p of items) {
+        if (p.promo) withPromo += 1;
+        if (!getAssetId(p.image)) withoutImage += 1;
+        if (countVariants(p.variantes) > 0) withVariants += 1;
+        const ts = new Date(p.date_updated || p.date_created || 0).getTime();
+        if (Number.isFinite(ts) && ts > lastUpdated) lastUpdated = ts;
+      }
+      const brands = new Set(items.map((p) => String(p.marque || '').trim()).filter(Boolean));
+      return { total, withPromo, withoutImage, withVariants, brands: brands.size, lastUpdated };
+    }
+
+    function renderStats(items) {
+      if (!statsEl) return;
+      if (!items.length) {
+        statsEl.innerHTML = '';
+        return;
+      }
+      const s = computeStats(items);
+      const lastLabel = s.lastUpdated ? formatDate(new Date(s.lastUpdated).toISOString()) : '—';
+      statsEl.innerHTML = `
+        <div class="product-stat">
+          <span class="product-stat-label">Total</span>
+          <span class="product-stat-value">${s.total}</span>
+          <span class="product-stat-hint">produits charges</span>
+        </div>
+        <div class="product-stat is-warning">
+          <span class="product-stat-label">En promo</span>
+          <span class="product-stat-value">${s.withPromo}</span>
+          <span class="product-stat-hint">${Math.round((s.withPromo / s.total) * 100)}% du catalogue</span>
+        </div>
+        <div class="product-stat is-danger">
+          <span class="product-stat-label">Sans image</span>
+          <span class="product-stat-value">${s.withoutImage}</span>
+          <span class="product-stat-hint">a completer en priorite</span>
+        </div>
+        <div class="product-stat is-ok">
+          <span class="product-stat-label">Avec variantes</span>
+          <span class="product-stat-value">${s.withVariants}</span>
+          <span class="product-stat-hint">declinaisons enregistrees</span>
+        </div>
+        <div class="product-stat">
+          <span class="product-stat-label">Marques</span>
+          <span class="product-stat-value">${s.brands}</span>
+          <span class="product-stat-hint">distinctes</span>
+        </div>
+        <div class="product-stat">
+          <span class="product-stat-label">Derniere MAJ</span>
+          <span class="product-stat-value" style="font-size:1rem;">${escapeHtml(lastLabel)}</span>
+          <span class="product-stat-hint">fiche la plus recente</span>
+        </div>
+      `;
+    }
+
+    // Dirty-state: detecte les modifs non sauvegardees dans l'editeur
+    let isDirty = false;
+    let initialFormSnapshot = '';
+    function snapshotForm() {
+      if (!formEl) return '';
+      const data = {};
+      formEl.querySelectorAll('input, textarea, select').forEach((el) => {
+        if (!el.name) return;
+        if (el.type === 'file') return;
+        if (el.type === 'checkbox') data[el.name] = el.checked ? '1' : '0';
+        else data[el.name] = el.value;
+      });
+      initialFormSnapshot = JSON.stringify(data);
+      isDirty = false;
+      updateDirtyIndicator();
+    }
+    function updateDirtyIndicator() {
+      if (!formModeBadge) return;
+      if (isDirty) {
+        formModeBadge.textContent = (productIdInput.value ? 'Edition' : 'Creation') + ' • non enregistre';
+        formModeBadge.classList.add('is-warn');
+        currentProductLabel && (currentProductLabel.textContent = 'Modifications non sauvegardees. Ctrl+S pour enregistrer.');
+      } else {
+        formModeBadge.textContent = productIdInput.value ? 'Mode edition' : 'Mode creation';
+        formModeBadge.classList.remove('is-warn');
+      }
+    }
+    function checkDirty() {
+      if (!formEl) return;
+      const data = {};
+      formEl.querySelectorAll('input, textarea, select').forEach((el) => {
+        if (!el.name) return;
+        if (el.type === 'file') return;
+        if (el.type === 'checkbox') data[el.name] = el.checked ? '1' : '0';
+        else data[el.name] = el.value;
+      });
+      const current = JSON.stringify(data);
+      isDirty = current !== initialFormSnapshot;
+      updateDirtyIndicator();
+    }
+
+    function getStatusInfo(product) {
+      const raw = product.status ?? product.status_publication ?? '';
+      const s = String(raw).toLowerCase();
+      if (s === 'published' || s === 'publie' || s === 'active' || s === 'actif') {
+        return { label: 'Publie', cls: 'is-ok' };
+      }
+      if (s === 'draft' || s === 'brouillon') return { label: 'Brouillon', cls: 'is-warn' };
+      if (s === 'archived' || s === 'archive') return { label: 'Archive', cls: 'is-muted' };
+      return null;
     }
 
     function renderProductList(items) {
@@ -550,33 +735,105 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
         const title = product.Nom_du_produit || product.slug || 'Sans nom';
         const image = assetUrl(product.image);
         const price = product.promo && product.prix_promo ? `${product.prix_promo} EUR promo` : product.prix ? `${product.prix} EUR` : 'Prix non defini';
+        const variants = countVariants(product.variantes);
+        const gallery = countGallery(product.galerie);
+        const status = getStatusInfo(product);
+        const updated = formatDate(product.date_updated);
+        const shortDesc = (product.description_simple || '').slice(0, 110);
+        const selectedId = activeProduct && activeProduct.id;
+        const isSelected = selectedId && String(selectedId) === String(product.id);
         return `
-          <button type="button" class="product-catalog-card" data-action="edit" data-id="${escapeHtml(product.id)}">
+          <button type="button" class="product-catalog-card${isSelected ? ' is-selected' : ''}" data-action="edit" data-id="${escapeHtml(product.id)}">
             <span class="product-catalog-image" ${image ? `style="background-image:url('${escapeHtml(image)}')"` : ''}>${image ? '' : escapeHtml(String(title).slice(0, 2).toUpperCase())}</span>
             <span class="product-catalog-body">
               <strong>${escapeHtml(title)}</strong>
-              <span>${escapeHtml(product.marque || 'Sans marque')} · ${escapeHtml(product.slug || 'sans-slug')}</span>
-              <small>${escapeHtml(product.description_simple || '')}</small>
+              <span class="product-catalog-sub">${escapeHtml(product.marque || 'Sans marque')} · ${escapeHtml(product.slug || 'sans-slug')}</span>
+              ${shortDesc ? `<small class="product-catalog-desc">${escapeHtml(shortDesc)}${(product.description_simple || '').length > 110 ? '…' : ''}</small>` : ''}
             </span>
             <span class="product-catalog-meta">
-              <span class="badge">${escapeHtml(price)}</span>
-              <span class="badge">${product.promo ? 'Promo' : 'Standard'}</span>
+              <span class="badge badge-price">${escapeHtml(price)}</span>
+              <span class="badge ${product.promo ? 'is-promo' : 'is-standard'}">${product.promo ? 'Promo' : 'Standard'}</span>
+              ${variants ? `<span class="badge is-info" title="Nombre de variantes">${variants} var.</span>` : ''}
+              ${gallery ? `<span class="badge is-info" title="Images dans la galerie">${gallery} imgs</span>` : ''}
+              ${status ? `<span class="badge ${status.cls}">${escapeHtml(status.label)}</span>` : ''}
+              ${updated ? `<span class="product-catalog-updated" title="Derniere mise a jour">MAJ ${escapeHtml(updated)}</span>` : ''}
             </span>
           </button>
         `;
       }).join('');
     }
 
+    function getSortValue(product, key) {
+      switch (key) {
+        case 'name_asc':
+        case 'name_desc':
+          return String(product.Nom_du_produit || product.slug || '').toLowerCase();
+        case 'price_asc':
+        case 'price_desc':
+          return Number(product.prix ?? 0);
+        case 'updated_asc':
+        case 'updated_desc':
+        default:
+          return new Date(product.date_updated || product.date_created || 0).getTime();
+      }
+    }
+
+    function sortProducts(items, key) {
+      const arr = items.slice();
+      arr.sort((a, b) => {
+        const va = getSortValue(a, key);
+        const vb = getSortValue(b, key);
+        if (va < vb) return key.endsWith('_desc') ? 1 : -1;
+        if (va > vb) return key.endsWith('_desc') ? -1 : 1;
+        return 0;
+      });
+      return arr;
+    }
+
+    function refreshBrandOptions() {
+      if (!brandFilterEl) return;
+      const current = brandFilterEl.value;
+      const brands = Array.from(new Set(
+        products.map((p) => String(p.marque || '').trim()).filter(Boolean)
+      )).sort((a, b) => a.localeCompare(b, 'fr'));
+      brandFilterEl.innerHTML = '<option value="">Toutes</option>'
+        + brands.map((b) => `<option value="${escapeHtml(b)}">${escapeHtml(b)}</option>`).join('');
+      if (brands.includes(current)) brandFilterEl.value = current;
+    }
+
     function applyFilter() {
       const value = query.trim().toLowerCase();
-      const filtered = value
-        ? products.filter((product) => [
+      const brand = brandFilterEl ? brandFilterEl.value : '';
+      const promoOnly = promoOnlyEl ? promoOnlyEl.checked : false;
+      const noImage = noImageEl ? noImageEl.checked : false;
+      const sort = sortEl ? sortEl.value : 'updated_desc';
+
+      let filtered = products.filter((product) => {
+        if (value) {
+          const haystack = [
             product.Nom_du_produit,
             product.slug,
             product.marque,
             product.description_simple,
-          ].some((part) => String(part || '').toLowerCase().includes(value)))
-        : products;
+          ].some((part) => String(part || '').toLowerCase().includes(value));
+          if (!haystack) return false;
+        }
+        if (brand && String(product.marque || '') !== brand) return false;
+        if (promoOnly && !product.promo) return false;
+        if (noImage && getAssetId(product.image)) return false;
+        return true;
+      });
+
+      filtered = sortProducts(filtered, sort);
+
+      if (resultsCountEl) {
+        const total = products.length;
+        const shown = filtered.length;
+        resultsCountEl.textContent = total === shown
+          ? `${total} produit${total > 1 ? 's' : ''}`
+          : `${shown} / ${total} produit${total > 1 ? 's' : ''}`;
+      }
+
       renderProductList(filtered);
     }
 
@@ -595,6 +852,8 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
       if (!res.ok) throw json;
       const items = json?.data ?? json;
       products = Array.isArray(items) ? items : [];
+      refreshBrandOptions();
+      renderStats(products);
       applyFilter();
     }
 
@@ -697,6 +956,11 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
       applyFilter();
     });
 
+    if (brandFilterEl) brandFilterEl.addEventListener('change', applyFilter);
+    if (sortEl) sortEl.addEventListener('change', applyFilter);
+    if (promoOnlyEl) promoOnlyEl.addEventListener('change', applyFilter);
+    if (noImageEl) noImageEl.addEventListener('change', applyFilter);
+
     dynamicFieldsEl.addEventListener('input', (event) => {
       const field = event.target.closest('[data-field="description_principale"]');
       if (!field) return;
@@ -707,6 +971,31 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
     formEl.addEventListener('input', (event) => {
       const variantField = event.target.closest('[data-variant-field]');
       if (variantField) updateVariantFromInput(variantField);
+      // Dirty detection sur tout input du formulaire
+      checkDirty();
+    });
+
+    // Bouton Dupliquer -> ouvre un nouvel editeur sans l'ID, avec copie des valeurs
+    duplicateBtn.addEventListener('click', () => {
+      if (!activeProduct) return;
+      const copy = { ...activeProduct };
+      delete copy.id;
+      // On vide les images/galerie (fichiers et Asset IDs) pour eviter de re-uploader
+      copy.image = null;
+      copy.galerie = null;
+      copy.Nom_du_produit = (copy.Nom_du_produit || 'Produit') + ' (copie)';
+      copy.slug = (copy.slug || 'produit') + '-copie';
+      openEditor(copy);
+    });
+
+    // Raccourci Ctrl+S / Cmd+S pour enregistrer depuis l'editeur
+    window.addEventListener('keydown', (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        if (overlay.classList.contains('is-open')) {
+          event.preventDefault();
+          formEl.requestSubmit();
+        }
+      }
     });
 
     formEl.addEventListener('click', (event) => {
@@ -742,6 +1031,9 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
           const fresh = await loadProduct(id);
           openEditor(fresh);
         }
+        // Reset dirty apres sauvegarde reussie
+        isDirty = false;
+        setTimeout(snapshotForm, 0);
       } catch (error) {
         console.error(error);
         setStatus('Erreur: ' + (error?.message || JSON.stringify(error)), 'error');
