@@ -1,5 +1,14 @@
 ---
+// src/pages/admin/products.astro
+// -----------------------------------------------------------------------------
+// Les champs du formulaire sont generes dynamiquement a partir de la
+// configuration centralisee (src/config/client.ts). Le rendu d'un champ
+// isole est delegue au composant <FieldRenderer />.
+// -----------------------------------------------------------------------------
 import CockpitLayout from '../../layouts/CockpitLayout.astro';
+import { produitsCollection, groupCollectionFields } from '../../config/client';
+
+const fieldGroups = groupCollectionFields(produitsCollection);
 ---
 
 <CockpitLayout title="Admin - Produits">
@@ -118,7 +127,93 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
           </aside>
 
           <main class="product-editor-main">
-            <div id="dynamic-fields" class="product-editor-fields"></div>
+            <div id="dynamic-fields" class="product-editor-fields">
+              {fieldGroups.map((group) => (
+                <section class="form-section product-editor-section">
+                  <div class="section-header">
+                    <h3>{group.title}</h3>
+                    {group.helper && <p class="form-helper">{group.helper}</p>}
+                  </div>
+                  <div class="product-field-grid">
+                    {group.fields.map((field) => (
+                      <div class:list={['product-field', field.wide ? 'product-field--wide' : '']}>
+                        <label class="field-label">{field.label}{field.required ? ' *' : ''}</label>
+                        {field.type === 'html' && (
+                          <div class="html-field" data-html-field>
+                            <div class="html-field-top">
+                              <div>
+                                <p class="form-helper">Apercu du texte final rendu depuis le HTML enregistre.</p>
+                              </div>
+                              <span class="badge">HTML</span>
+                            </div>
+                            <div class="html-preview-shell">
+                              <div class="html-preview" data-html-preview></div>
+                            </div>
+                            <details class="html-curtain">
+                              <summary>Modifier le HTML</summary>
+                              <textarea
+                                name={field.key}
+                                data-field={field.key}
+                                class="textarea-base editor-field"
+                                rows={10}
+                                spellcheck="false"
+                              />
+                            </details>
+                            {field.helper && <p class="form-helper">{field.helper}</p>}
+                          </div>
+                        )}
+                        {field.type === 'boolean' && (
+                          <label class="product-switch">
+                            <input name={field.key} data-field={field.key} class="editor-field" type="checkbox" />
+                            <span>{field.label}{field.required ? ' *' : ''}</span>
+                          </label>
+                        )}
+                        {field.type === 'textarea' && (
+                          <textarea
+                            name={field.key}
+                            data-field={field.key}
+                            class="textarea-base editor-field"
+                            rows={field.key === 'description_principale' ? 6 : 3}
+                            placeholder={field.placeholder}
+                          />
+                        )}
+                        {field.type === 'json' && (
+                          <textarea
+                            name={field.key}
+                            data-field={field.key}
+                            class="textarea-base editor-field"
+                            rows={6}
+                            placeholder={field.placeholder}
+                          />
+                        )}
+                        {field.type === 'select' && (
+                          <select name={field.key} data-field={field.key} class="input-base editor-field">
+                            <option value="">-- Selectionner --</option>
+                            {(field.options ?? []).map((opt) => (
+                              <option value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        )}
+                        {!['html','boolean','textarea','json','select'].includes(field.type) && (
+                          <input
+                            name={field.key}
+                            data-field={field.key}
+                            class="input-base editor-field"
+                            type={field.type === 'decimal' ? 'number' : (field.type === 'datetime' ? 'datetime-local' : (field.type === 'date' ? 'date' : 'text'))}
+                            step={field.type === 'decimal' ? '0.01' : undefined}
+                            placeholder={field.placeholder}
+                            required={field.required}
+                          />
+                        )}
+                        {field.helper && !['html','textarea','json','select','boolean'].includes(field.type) && (
+                          <p class="form-helper">{field.helper}</p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
           </main>
         </div>
       </form>
@@ -455,21 +550,9 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
         .filter((field) => !isReadonlyField(field));
     }
 
-    function groupFields(product) {
-      const editable = editableFields(product);
-      const byName = new Map(editable.map((field) => [field.field, field]));
-      const primary = PRIMARY_FIELDS.filter((name) => byName.has(name)).map((name) => byName.get(name));
-      const primaryNames = new Set(primary.map((field) => field.field));
-      const other = editable.filter((field) => !primaryNames.has(field.field));
-
-      return [
-        { title: 'Informations produit', helper: 'Champs essentiels de la fiche visible cote site.', fields: primary.slice(0, 6) },
-        { title: 'Commerce et specs', helper: 'Prix, promotion, dimensions et caracteristiques.', fields: primary.slice(6, 15) },
-        { title: 'Contenu avance', helper: 'SEO, variantes, FAQ et reglages additionnels.', fields: primary.slice(15) },
-        { title: 'Champs Directus detectes', helper: 'Autres champs presents dans la collection Produits.', fields: other },
-      ].filter((group) => group.fields.length);
-    }
-
+    /* groupFields() et renderField() ne sont plus utilises cote client :
+       le DOM des champs est genere cote serveur depuis la config centralisee
+       (src/config/client.ts) via <FieldRenderer /> / map(). */
     function renderField(field, product) {
       const name = field.field;
       const value = product?.[name];
@@ -551,19 +634,29 @@ import CockpitLayout from '../../layouts/CockpitLayout.astro';
       if (imageInput instanceof HTMLInputElement) imageInput.value = getAssetId(product.image);
       renderVariants(product.variantes);
 
-      const groups = groupFields(product);
-      dynamicFieldsEl.innerHTML = groups.map((group) => `
-        <section class="form-section product-editor-section">
-          <div class="section-header">
-            <h3>${escapeHtml(group.title)}</h3>
-            <p class="form-helper">${escapeHtml(group.helper)}</p>
-          </div>
-          <div class="product-field-grid">
-            ${group.fields.map((field) => `<div class="product-field ${field.field === 'description_principale' ? 'product-field--wide' : ''}">${renderField(field, product)}</div>`).join('')}
-          </div>
-        </section>
-      `).join('');
+      // Le DOM des champs est genere cote serveur depuis la config. On
+      // remplit juste les valeurs, on ne touche pas a innerHTML.
+      fillFormFromProduct(product);
       refreshHtmlPreviews();
+    }
+
+    // Remplit les inputs/textarea/select deja presents dans le DOM (generes
+    // par la config) avec les valeurs du produit charge.
+    function fillFormFromProduct(product) {
+      formEl.querySelectorAll('input[data-field], textarea[data-field], select[data-field]').forEach((el) => {
+        const name = el.dataset.field;
+        if (!name || RESERVED_FIELDS.has(name)) return;
+        const v = product?.[name];
+        if (el instanceof HTMLInputElement && el.type === 'checkbox') {
+          el.checked = Boolean(v);
+        } else if (v === null || v === undefined) {
+          el.value = '';
+        } else if (typeof v === 'object') {
+          el.value = JSON.stringify(v, null, 2);
+        } else {
+          el.value = String(v);
+        }
+      });
     }
 
     function openEditor(product = {}) {

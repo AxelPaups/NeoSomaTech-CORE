@@ -1,0 +1,141 @@
+---
+// src/components/widgets/FieldRenderer.astro
+// -----------------------------------------------------------------------------
+// Rendu d'un champ unique, pilote par la definition FieldDef issue de
+// src/config/client.ts. Utilise par les pages admin pour generer
+// dynamiquement les formulaires a partir de la config.
+// -----------------------------------------------------------------------------
+import type { FieldDef } from '../../config/client';
+
+interface Props {
+  field: FieldDef;
+  value?: unknown;
+}
+
+const { field, value } = Astro.props;
+
+const label = field.label ?? field.key;
+const required = !!field.required;
+const requiredMark = required ? ' *' : '';
+
+function normalizeValue(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  if (typeof v === 'object') return JSON.stringify(v, null, 2);
+  return String(v);
+}
+function normalizeNumber(v: unknown): string {
+  if (v === null || v === undefined) return '';
+  return String(v).replace(',', '.');
+}
+
+const strValue = normalizeValue(value);
+const numValue = normalizeNumber(value);
+const checked = !!value;
+const isJson = field.type === 'json';
+const isHtml = field.type === 'html';
+const isBoolean = field.type === 'boolean';
+const isTextarea = field.type === 'textarea' || isJson;
+const isSelect = field.type === 'select';
+const inputBaseClass = 'input-base editor-field';
+const textareaBaseClass = 'textarea-base editor-field';
+---
+<Fragment>
+  {isHtml && (
+    <div class="html-field" data-html-field>
+      <div class="html-field-top">
+        <div>
+          <label class="field-label">{label}{requiredMark}</label>
+          <p class="form-helper">Apercu du texte final rendu depuis le HTML enregistre.</p>
+        </div>
+        <span class="badge">HTML</span>
+      </div>
+      <div class="html-preview-shell">
+        <div class="html-preview" data-html-preview></div>
+      </div>
+      <details class="html-curtain">
+        <summary>Modifier le HTML</summary>
+        <textarea
+          name={field.key}
+          data-field={field.key}
+          class={textareaBaseClass}
+          rows={10}
+          spellcheck="false"
+          set:html={strValue}
+        />
+      </details>
+      {field.helper && <p class="form-helper">{field.helper}</p>}
+    </div>
+  )}
+
+  {!isHtml && isBoolean && (
+    <label class="product-switch">
+      <input
+        name={field.key}
+        data-field={field.key}
+        class="editor-field"
+        type="checkbox"
+        checked={checked}
+        data-default-checked={checked ? '1' : '0'}
+      />
+      <span>{label}{requiredMark}</span>
+    </label>
+  )}
+
+  {!isHtml && !isBoolean && isTextarea && (
+    <Fragment>
+      <label class="field-label">{label}{requiredMark}</label>
+      <textarea
+        name={field.key}
+        data-field={field.key}
+        class={textareaBaseClass}
+        rows={isJson ? 6 : 3}
+        placeholder={field.placeholder}
+        set:html={strValue}
+      />
+      {field.helper && <p class="form-helper">{field.helper}</p>}
+    </Fragment>
+  )}
+
+  {!isHtml && !isBoolean && !isTextarea && isSelect && (
+    <Fragment>
+      <label class="field-label">{label}{requiredMark}</label>
+      <select
+        name={field.key}
+        data-field={field.key}
+        class={inputBaseClass}
+      >
+        <option value="">-- Selectionner --</option>
+        {(field.options ?? []).map((opt) => (
+          <option value={opt.value} selected={String(value ?? '') === opt.value}>
+            {opt.label}
+          </option>
+        ))}
+      </select>
+      {field.helper && <p class="form-helper">{field.helper}</p>}
+    </Fragment>
+  )}
+
+  {!isHtml && !isBoolean && !isTextarea && !isSelect && (
+    <Fragment>
+      <label class="field-label">{label}{requiredMark}</label>
+      <input
+        name={field.key}
+        data-field={field.key}
+        class={inputBaseClass}
+        type={(() => {
+          const t = field.type;
+          if (t === 'decimal' || t === 'number') return 'number';
+          if (t === 'date') return 'date';
+          if (t === 'datetime') return 'datetime-local';
+          if (t === 'text' || t === 'textarea' || t === 'select' || t === 'html' || t === 'json' || t === 'boolean' || t === 'asset' || t === 'relation-many') return 'text';
+          return 'text';
+        })()}
+        value={(field.type === 'decimal' || field.type === 'number') ? numValue : strValue}
+        step={field.type === 'decimal' ? '0.01' : undefined}
+        placeholder={field.placeholder}
+        required={required}
+      />
+      {field.helper && <p class="form-helper">{field.helper}</p>}
+    </Fragment>
+  )}
+</Fragment>
